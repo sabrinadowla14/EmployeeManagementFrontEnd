@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { EmployeeService } from '../employee.service';
 import { Router, ActivatedRoute } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
 @Component({
   selector: 'app-employee-form',
   standalone: true,
@@ -31,63 +32,86 @@ export class EmployeeFormComponent implements OnInit {
   ngOnInit(): void {
     this.route.paramMap.subscribe((params) => {
       //this id is from the route and is a string or null
-      const id = params.get('id');
-      if (id) {
-        this.isEdited = true; // Set the flag to true if we are editing
-        console.log('Editing employee with id:', id);
-        //we can convert it using Number(id) or +id
-        this.empService.getEmployeeById(+id).subscribe({
-          next: (employee) => {
-            this.employee = employee;
-            console.log('Employee data:', this.employee);
-          },
-          error: (err) => {
-            this.errorMessage = err;
-            console.error('Error fetching employee:', err);
-          },
-        });
-      } else {
-        this.isEdited = false; // Set the flag to false if we are creating
-        console.log('Creating a new employee');
+      const idParam = params.get('id');
+      if (!idParam) {
+        this.isEdited = false;
+        return;
       }
+
+      const id = Number(idParam);
+      if (Number.isNaN(id)) {
+        this.errorMessage = 'Invalid employee id.';
+        return;
+      }
+      this.isEdited = true; // Set the flag to true if we are editing
+      console.log('Editing employee with id:', id);
+      //we can convert it using Number(id) or +id
+      this.empService.getEmployeeById(id).subscribe({
+        next: (employee) => {
+          this.employee = employee;
+          this.errorMessage = ''; // clear any prior error
+          console.log('Employee data:', this.employee);
+        },
+        error: (err: HttpErrorResponse) => {
+          this.errorMessage = this.friendlyError(err, id); // <-- string now
+          console.error('Error fetching employee:', err);
+        },
+      });
     });
   }
 
   onSubmit(): void {
-    const payload = {
-      ...this.employee,
-      id: Number(this.employee.id), // must match route id
-      firstName: (this.employee.firstName || '').trim(),
-      lastName: (this.employee.lastName || '').trim(),
-      email: (this.employee.email || '').trim(),
-      phone: String(this.employee.phone ?? '').trim(), // ensure string
-      position: (this.employee.position || '').trim(),
-    };
     if (this.isEdited) {
-      // Update existing employee
-
       this.empService.editEmployee(this.employee).subscribe({
-        next: (newEmployee) => {
-          console.log('Employee created successfully:', newEmployee);
-          this.router.navigate(['/']); // Navigate back to the employee list after creation
+        next: (updated) => {
+          console.log('Employee updated successfully:', updated);
+          this.router.navigate(['/']);
         },
-        error: (err) => {
-          this.errorMessage = err;
-          console.error('Error creating employee:', err.status);
+        error: (err: HttpErrorResponse) => {
+          this.errorMessage = this.friendlyError(err);
+          console.error('Update failed:', err);
         },
       });
     } else {
-      // Create new employee
-      this.empService.createEmployee(this.employee).subscribe({
-        next: (newEmployee) => {
-          console.log('Employee created successfully:', newEmployee);
-          this.router.navigate(['/']); // Navigate back to the employee list after creation
+      // demo payload to satisfy [Required] on API
+      const payload = {
+        ...this.employee,
+        firstName: this.employee.firstName || 'Sabrina',
+        lastName: this.employee.lastName || 'Dowla',
+        email: this.employee.email || 'sabrina@example.com',
+        phone: this.employee.phone || '555-1212',
+        position: this.employee.position || 'Developer',
+      };
+
+      this.empService.createEmployee(payload).subscribe({
+        next: (created) => {
+          console.log('Employee created successfully:', created);
+          this.router.navigate(['/']);
         },
-        error: (err) => {
-          this.errorMessage = err;
-          console.error('Error creating employee:', err.status);
+        error: (err: HttpErrorResponse) => {
+          this.errorMessage = this.friendlyError(err);
+          console.error('Create failed:', err);
         },
       });
     }
+  }
+  private friendlyError(err: any, id?: number): string {
+    // HttpErrorResponse shape
+    const status = err?.status;
+    const body = err?.error;
+
+    if (status === 404) return id ? `Employee ${id} not found.` : 'Not found.';
+    if (status === 0) return 'Network error—cannot reach the server.';
+
+    if (body && typeof body === 'object') {
+      if (body.title) return body.title; // ProblemDetails.title
+      if (body.errors) {
+        const msgs = Object.values(body.errors).flat() as string[];
+        if (msgs.length) return msgs.join(' ');
+      }
+    }
+
+    if (typeof body === 'string') return body;
+    return `Request failed (${status ?? 'unknown'}).`;
   }
 }
